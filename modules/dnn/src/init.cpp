@@ -76,7 +76,7 @@ void initializeLayerFactory()
 {
     CV_TRACE_FUNCTION();
 
-    static ProtobufShutdown protobufShutdown; (void)protobufShutdown;
+    static ProtobufShutdown protobufShutdown; CV_UNUSED(protobufShutdown);
 
     CV_DNN_REGISTER_LAYER_CLASS(Slice,          SliceLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Split,          SplitLayer);
@@ -103,6 +103,8 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(PReLU,          ChannelsPReLULayer);
     CV_DNN_REGISTER_LAYER_CLASS(Sigmoid,        SigmoidLayer);
     CV_DNN_REGISTER_LAYER_CLASS(TanH,           TanHLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Swish,          SwishLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Mish,           MishLayer);
     CV_DNN_REGISTER_LAYER_CLASS(ELU,            ELULayer);
     CV_DNN_REGISTER_LAYER_CLASS(BNLL,           BNLLLayer);
     CV_DNN_REGISTER_LAYER_CLASS(AbsVal,         AbsLayer);
@@ -112,6 +114,7 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(Dropout,        BlankLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Identity,       BlankLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Silence,        BlankLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Const,          ConstLayer);
 
     CV_DNN_REGISTER_LAYER_CLASS(Crop,           CropLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Eltwise,        EltwiseLayer);

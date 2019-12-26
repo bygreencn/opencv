@@ -68,13 +68,17 @@
         @defgroup core_c_glue Connections with C++
     @}
     @defgroup core_array Operations on arrays
+    @defgroup core_async Asynchronous API
     @defgroup core_xml XML/YAML Persistence
     @defgroup core_cluster Clustering
     @defgroup core_utils Utility and system functions and macros
     @{
+        @defgroup core_logging Logging facilities
         @defgroup core_utils_sse SSE utilities
         @defgroup core_utils_neon NEON utilities
+        @defgroup core_utils_vsx VSX utilities
         @defgroup core_utils_softfloat Softfloat support
+        @defgroup core_utils_samples Utility functions for OpenCV samples
     @}
     @defgroup core_opengl OpenGL interoperability
     @defgroup core_ipp Intel IPP Asynchronous C/C++ Converters
@@ -310,9 +314,9 @@ if src was not a ROI, use borderType | #BORDER_ISOLATED.
 @param src Source image.
 @param dst Destination image of the same type as src and the size Size(src.cols+left+right,
 src.rows+top+bottom) .
-@param top
-@param bottom
-@param left
+@param top the top pixels
+@param bottom the bottom pixels
+@param left the left pixels
 @param right Parameter specifying how many pixels in each direction from the source image rectangle
 to extrapolate. For example, top=1, bottom=1, left=1, right=1 mean that 1 pixel-wide border needs
 to be built.
@@ -2962,7 +2966,7 @@ An example on K-means clustering
 /** @brief Finds centers of clusters and groups input samples around the clusters.
 
 The function kmeans implements a k-means algorithm that finds the centers of cluster_count clusters
-and groups the input samples around the clusters. As an output, \f$\texttt{labels}_i\f$ contains a
+and groups the input samples around the clusters. As an output, \f$\texttt{bestLabels}_i\f$ contains a
 0-based cluster index for the sample stored in the \f$i^{th}\f$ row of the samples matrix.
 
 @note
@@ -3081,7 +3085,7 @@ public:
 
     /** @brief Stores algorithm parameters in a file storage
     */
-    virtual void write(FileStorage& fs) const { (void)fs; }
+    virtual void write(FileStorage& fs) const { CV_UNUSED(fs); }
 
     /** @brief simplified API for language bindings
     * @overload
@@ -3090,7 +3094,7 @@ public:
 
     /** @brief Reads algorithm parameters from a file storage
     */
-    CV_WRAP virtual void read(const FileNode& fn) { (void)fn; }
+    CV_WRAP virtual void read(const FileNode& fn) { CV_UNUSED(fn); }
 
     /** @brief Returns true if the Algorithm is empty (e.g. in the very beginning or after unsuccessful read
     */

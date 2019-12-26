@@ -105,9 +105,7 @@
 #cmakedefine HAVE_IPP
 #cmakedefine HAVE_IPP_ICV
 #cmakedefine HAVE_IPP_IW
-
-/* Intel IPP Async */
-#cmakedefine HAVE_IPP_A
+#cmakedefine HAVE_IPP_IW_LL
 
 /* JPEG-2000 codec */
 #cmakedefine HAVE_JASPER
@@ -137,6 +135,9 @@
 #cmakedefine HAVE_OPENCL
 #cmakedefine HAVE_OPENCL_STATIC
 #cmakedefine HAVE_OPENCL_SVM
+
+/* NVIDIA OpenCL D3D Extensions support */
+#cmakedefine HAVE_OPENCL_D3D11_NV
 
 /* OpenEXR codec */
 #cmakedefine HAVE_OPENEXR
@@ -244,5 +245,7 @@
 /* OpenCV trace utilities */
 #cmakedefine OPENCV_TRACE
 
+/* Library QR-code decoding */
+#cmakedefine HAVE_QUIRC
 
 #endif // OPENCV_CVCONFIG_H_INCLUDED

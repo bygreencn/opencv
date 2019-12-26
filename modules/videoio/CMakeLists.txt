@@ -80,16 +80,16 @@ endif()
 if (WIN32 AND HAVE_DSHOW)
   list(APPEND videoio_srcs ${CMAKE_CURRENT_LIST_DIR}/src/cap_dshow.cpp)
   list(APPEND videoio_hdrs ${CMAKE_CURRENT_LIST_DIR}/src/cap_dshow.hpp)
-  if (MINGW64)
+  if(MINGW AND X86_64)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DSTRSAFE_NO_DEPRECATE")
   endif()
 endif()
 
-if (WIN32 AND HAVE_MSMF)
+if(WIN32 AND HAVE_MSMF)
   list(APPEND videoio_srcs ${CMAKE_CURRENT_LIST_DIR}/src/cap_msmf.hpp)
   list(APPEND videoio_srcs ${CMAKE_CURRENT_LIST_DIR}/src/cap_msmf.cpp)
-  if (HAVE_DXVA)
-    add_definitions(-DHAVE_DXVA)
+  if(HAVE_MSMF_DXVA)
+    add_definitions(-DHAVE_MSMF_DXVA)
   endif()
 endif()
 
@@ -233,8 +233,8 @@ if(IOS)
   list(APPEND VIDEOIO_LIBRARIES "-framework Accelerate" "-framework AVFoundation" "-framework CoreGraphics" "-framework CoreImage" "-framework CoreMedia" "-framework CoreVideo" "-framework QuartzCore" "-framework UIKit")
 endif()
 
-if(UNIX)
-  #these variables are set by CHECK_MODULE macro
+if(TRUE)
+  # these variables are set by 'ocv_append_build_options(VIDEOIO ...)'
   foreach(P ${VIDEOIO_INCLUDE_DIRS})
     ocv_include_directories(${P})
   endforeach()
@@ -267,7 +267,7 @@ ocv_warnings_disable(CMAKE_CXX_FLAGS -Wno-deprecated-declarations)
 
 if(WIN32 AND HAVE_FFMPEG_WRAPPER)
   #copy ffmpeg dll to the output folder
-  if(MSVC64 OR MINGW64)
+  if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     set(FFMPEG_SUFFIX _64)
   endif()
 

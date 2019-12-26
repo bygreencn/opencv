@@ -584,6 +584,11 @@ void RNG::fill( InputOutputArray _mat, int disttype,
                 }
                 ip[j][1] = cvCeil(a);
                 int idiff = ip[j][0] = cvFloor(b) - ip[j][1] - 1;
+                if (idiff < 0)
+                {
+                    idiff = 0;
+                    ip[j][0] = 0;
+                }
                 double diff = b - a;
 
                 fast_int_mode = fast_int_mode && diff <= 4294967296. && (idiff & (idiff+1)) == 0;
@@ -765,7 +770,7 @@ void RNG::fill( InputOutputArray _mat, int disttype,
 
 cv::RNG& cv::theRNG()
 {
-    return getCoreTlsData().get()->rng;
+    return getCoreTlsData().rng;
 }
 
 void cv::setRNGSeed(int seed)
@@ -776,14 +781,14 @@ void cv::setRNGSeed(int seed)
 
 void cv::randu(InputOutputArray dst, InputArray low, InputArray high)
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     theRNG().fill(dst, RNG::UNIFORM, low, high);
 }
 
 void cv::randn(InputOutputArray dst, InputArray mean, InputArray stddev)
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     theRNG().fill(dst, RNG::NORMAL, mean, stddev);
 }
@@ -831,7 +836,7 @@ typedef void (*RandShuffleFunc)( Mat& dst, RNG& rng, double iterFactor );
 
 void cv::randShuffle( InputOutputArray _dst, double iterFactor, RNG* _rng )
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     RandShuffleFunc tab[] =
     {

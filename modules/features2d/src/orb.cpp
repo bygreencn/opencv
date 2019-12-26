@@ -724,7 +724,16 @@ int ORB_Impl::descriptorType() const
 
 int ORB_Impl::defaultNorm() const
 {
-    return NORM_HAMMING;
+    switch (wta_k)
+    {
+    case 2:
+        return NORM_HAMMING;
+    case 3:
+    case 4:
+        return NORM_HAMMING2;
+    default:
+        return -1;
+    }
 }
 
 #ifdef HAVE_OPENCL
@@ -779,7 +788,7 @@ static void computeKeyPoints(const Mat& imagePyramid,
                              bool useOCL, int fastThreshold  )
 {
 #ifndef HAVE_OPENCL
-    (void)uimagePyramid;(void)ulayerInfo;(void)useOCL;
+    CV_UNUSED(uimagePyramid);CV_UNUSED(ulayerInfo);CV_UNUSED(useOCL);
 #endif
 
     int i, nkeypoints, level, nlevels = (int)layerInfo.size();
@@ -957,7 +966,7 @@ void ORB_Impl::detectAndCompute( InputArray _image, InputArray _mask,
                                  std::vector<KeyPoint>& keypoints,
                                  OutputArray _descriptors, bool useProvidedKeypoints )
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     CV_Assert(patchSize >= 2);
 

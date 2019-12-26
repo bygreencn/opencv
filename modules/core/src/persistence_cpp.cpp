@@ -11,21 +11,6 @@
 namespace cv
 {
 
-static void getElemSize( const String& fmt, size_t& elemSize, size_t& cn )
-{
-    const char* dt = fmt.c_str();
-    cn = 1;
-    if( cv_isdigit(dt[0]) )
-    {
-        cn = dt[0] - '0';
-        dt++;
-    }
-    char c = dt[0];
-    elemSize = cn*(c == 'u' || c == 'c' ? sizeof(uchar) : c == 'w' || c == 's' ? sizeof(ushort) :
-        c == 'i' ? sizeof(int) : c == 'f' ? sizeof(float) : c == 'd' ? sizeof(double) :
-        c == 'r' ? sizeof(void*) : (size_t)0);
-}
-
 FileStorage::FileStorage()
 {
     state = UNDEFINED;
@@ -56,7 +41,7 @@ FileStorage::~FileStorage()
 
 bool FileStorage::open(const String& filename, int flags, const String& encoding)
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     release();
     fs.reset(cvOpenFileStorage( filename.c_str(), 0, flags,
@@ -164,8 +149,8 @@ void FileStorage::writeRaw( const String& fmt, const uchar* vec, size_t len )
 {
     if( !isOpened() )
         return;
-    size_t elemSize, cn;
-    getElemSize( fmt, elemSize, cn );
+    CV_Assert(!fmt.empty());
+    size_t elemSize = ::icvCalcStructSize(fmt.c_str(), 0);
     CV_Assert( len % elemSize == 0 );
     cvWriteRawData( fs, vec, (int)(len/elemSize), fmt.c_str());
 }
@@ -269,6 +254,19 @@ FileNode FileNode::operator[](int i) const
         i == 0 ? *this : FileNode();
 }
 
+std::vector<String> FileNode::keys() const
+{
+    CV_Assert(isMap());
+
+    std::vector<String> res;
+    res.reserve(size());
+    for (FileNodeIterator it = begin(); it != end(); ++it)
+    {
+        res.push_back((*it).name());
+    }
+    return res;
+}
+
 String FileNode::name() const
 {
     const char* str;
@@ -328,6 +326,15 @@ FileNodeIterator::FileNodeIterator(const FileNodeIterator& it)
     container = it.container;
     reader = it.reader;
     remaining = it.remaining;
+}
+
+FileNodeIterator& FileNodeIterator::operator=(const FileNodeIterator& it)
+{
+    fs = it.fs;
+    container = it.container;
+    reader = it.reader;
+    remaining = it.remaining;
+    return *this;
 }
 
 FileNodeIterator& FileNodeIterator::operator ++()
@@ -399,19 +406,30 @@ FileNodeIterator& FileNodeIterator::operator -= (int ofs)
 }
 
 
-FileNodeIterator& FileNodeIterator::readRaw( const String& fmt, uchar* vec, size_t maxCount )
+FileNodeIterator& FileNodeIterator::readRaw(const String& fmt, uchar* vec, size_t len)
 {
-    if( fs && container && remaining > 0 )
+    CV_Assert(!fmt.empty());
+    if( fs && container && remaining > 0 && len > 0)
     {
-        size_t elem_size, cn;
-        getElemSize( fmt, elem_size, cn );
-        CV_Assert( elem_size > 0 );
-        size_t count = std::min(remaining, maxCount);
-
-        if( reader.seq )
+        if (reader.seq)
         {
-            cvReadRawDataSlice( fs, (CvSeqReader*)&reader, (int)count, vec, fmt.c_str() );
-            remaining -= count*cn;
+            size_t step = ::icvCalcStructSize(fmt.c_str(), 0);
+            if (len % step && len != (size_t)INT_MAX)  // TODO remove compatibility hack
+            {
+                CV_PARSE_ERROR("readRaw: total byte size not match elememt size");
+            }
+            size_t maxCount = len / step;
+            int fmt_pairs[CV_FS_MAX_FMT_PAIRS*2] = {};
+            int fmt_pair_count = icvDecodeFormat(fmt.c_str(), fmt_pairs, CV_FS_MAX_FMT_PAIRS);
+            int vecElems = 0;
+            for (int k = 0; k < fmt_pair_count; k++)
+            {
+                vecElems += fmt_pairs[k*2];
+            }
+            CV_Assert(vecElems > 0);
+            size_t count = std::min((size_t)remaining, (size_t)maxCount * vecElems);
+            cvReadRawDataSlice(fs, (CvSeqReader*)&reader, (int)count, vec, fmt.c_str());
+            remaining -= count;
         }
         else
         {
@@ -452,12 +470,12 @@ void write( FileStorage& fs, const String& name, const Mat& value )
 {
     if( value.dims <= 2 )
     {
-        CvMat mat = value;
+        CvMat mat = cvMat(value);
         cvWrite( *fs, name.size() ? name.c_str() : 0, &mat );
     }
     else
     {
-        CvMatND mat = value;
+        CvMatND mat = cvMatND(value);
         cvWrite( *fs, name.size() ? name.c_str() : 0, &mat );
     }
 }

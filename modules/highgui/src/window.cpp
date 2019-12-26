@@ -42,6 +42,7 @@
 #include "precomp.hpp"
 #include <map>
 #include "opencv2/core/opengl.hpp"
+#include "opencv2/core/utils/logger.hpp"
 
 // in later times, use this file as a dispatcher to implementations like cvcap.cpp
 
@@ -80,6 +81,16 @@ CV_IMPL void cvSetWindowProperty(const char* name, int prop_id, double prop_valu
     case CV_WND_PROP_ASPECTRATIO:
         #if defined (HAVE_QT)
             cvSetRatioWindow_QT(name,prop_value);
+        #endif
+    break;
+
+    case cv::WND_PROP_TOPMOST:
+        #if defined (HAVE_QT)
+            // nothing
+        #elif defined(HAVE_WIN32UI)
+            cvSetPropTopmost_W32(name, (prop_value != 0 ? true : false));
+        #elif defined(HAVE_COCOA)
+            cvSetPropTopmost_COCOA(name, (prop_value != 0 ? true : false));
         #endif
     break;
 
@@ -156,10 +167,25 @@ CV_IMPL double cvGetWindowProperty(const char* name, int prop_id)
     case CV_WND_PROP_VISIBLE:
         #if defined (HAVE_QT)
             return cvGetPropVisible_QT(name);
+        #elif defined(HAVE_WIN32UI)
+            return cvGetPropVisible_W32(name);
         #else
             return -1;
         #endif
     break;
+
+    case cv::WND_PROP_TOPMOST:
+        #if defined (HAVE_QT)
+            return -1;
+        #elif defined(HAVE_WIN32UI)
+            return cvGetPropTopmost_W32(name);
+        #elif defined(HAVE_COCOA)
+            return cvGetPropTopmost_COCOA(name);
+        #else
+            return -1;
+        #endif
+    break;
+
     default:
         return -1;
     }
@@ -356,7 +382,7 @@ void cv::imshow( const String& winname, InputArray _img )
     CV_Assert(size.width>0 && size.height>0);
     {
         Mat img = _img.getMat();
-        CvMat c_img = img;
+        CvMat c_img = cvMat(img);
         cvShowImage(winname.c_str(), &c_img);
     }
 #else
@@ -366,7 +392,7 @@ void cv::imshow( const String& winname, InputArray _img )
     if (useGl <= 0)
     {
         Mat img = _img.getMat();
-        CvMat c_img = img;
+        CvMat c_img = cvMat(img);
         cvShowImage(winname.c_str(), &c_img);
     }
     else
@@ -409,8 +435,8 @@ void cv::imshow(const String& winname, const ogl::Texture2D& _tex)
 {
     CV_TRACE_FUNCTION();
 #ifndef HAVE_OPENGL
-    (void) winname;
-    (void) _tex;
+    CV_UNUSED(winname);
+    CV_UNUSED(_tex);
     CV_Error(cv::Error::OpenGlNotSupported, "The library is compiled without OpenGL support");
 #else
     const double useGl = getWindowProperty(winname, WND_PROP_OPENGL);
@@ -469,23 +495,23 @@ CV_IMPL void cvUpdateWindow(const char*)
 
 cv::QtFont cv::fontQt(const String& nameFont, int pointSize, Scalar color, int weight, int style, int spacing)
 {
-    CvFont f = cvFontQt(nameFont.c_str(), pointSize,color,weight, style, spacing);
+    CvFont f = cvFontQt(nameFont.c_str(), pointSize, cvScalar(color), weight, style, spacing);
     void* pf = &f; // to suppress strict-aliasing
     return *(cv::QtFont*)pf;
 }
 
 void cv::addText( const Mat& img, const String& text, Point org, const QtFont& font)
 {
-    CvMat _img = img;
-    cvAddText( &_img, text.c_str(), org, (CvFont*)&font);
+    CvMat _img = cvMat(img);
+    cvAddText( &_img, text.c_str(), cvPoint(org), (CvFont*)&font);
 }
 
 void cv::addText( const Mat& img, const String& text, Point org, const String& nameFont,
         int pointSize, Scalar color, int weight, int style, int spacing)
 {
-    CvFont f = cvFontQt(nameFont.c_str(), pointSize,color,weight, style, spacing);
-    CvMat _img = img;
-    cvAddText( &_img, text.c_str(), org, &f);
+    CvFont f = cvFontQt(nameFont.c_str(), pointSize, cvScalar(color), weight, style, spacing);
+    CvMat _img = cvMat(img);
+    cvAddText( &_img, text.c_str(), cvPoint(org), &f);
 }
 
 void cv::displayStatusBar(const String& name,  const String& text, int delayms)
@@ -581,8 +607,8 @@ int cv::createButton(const String&, ButtonCallback, void*, int , bool )
 
 #if   defined (HAVE_WIN32UI)  // see window_w32.cpp
 #elif defined (HAVE_GTK)      // see window_gtk.cpp
-#elif defined (HAVE_COCOA)    // see window_carbon.cpp
-#elif defined (HAVE_CARBON)
+#elif defined (HAVE_COCOA)    // see window_cocoa.mm
+#elif defined (HAVE_CARBON)   // see window_carbon.cpp
 #elif defined (HAVE_QT)       // see window_QT.cpp
 #elif defined (WINRT) && !defined (WINRT_8_0) // see window_winrt.cpp
 
@@ -728,7 +754,7 @@ CV_IMPL void cvDisplayOverlay(const char* , const char* , int )
 
 CV_IMPL int cvStartLoop(int (*)(int argc, char *argv[]), int , char* argv[])
 {
-    (void)argv;
+    CV_UNUSED(argv);
     CV_NO_GUI_ERROR("cvStartLoop");
 }
 

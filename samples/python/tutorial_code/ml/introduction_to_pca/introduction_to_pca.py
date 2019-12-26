@@ -61,10 +61,10 @@ def getOrientation(pts, img):
 # Load image
 parser = argparse.ArgumentParser(description='Code for Introduction to Principal Component Analysis (PCA) tutorial.\
                                               This program demonstrates how to use OpenCV PCA to extract the orientation of an object.')
-parser.add_argument('--input', help='Path to input image.', default='../data/pca_test1.jpg')
+parser.add_argument('--input', help='Path to input image.', default='pca_test1.jpg')
 args = parser.parse_args()
 
-src = cv.imread(args.input)
+src = cv.imread(cv.samples.findFile(args.input))
 # Check if image is loaded successfully
 if src is None:
     print('Could not open or find the image: ', args.input)
@@ -85,13 +85,13 @@ _, contours, _ = cv.findContours(bw, cv.RETR_LIST, cv.CHAIN_APPROX_NONE)
 
 for i, c in enumerate(contours):
     # Calculate the area of each contour
-    area = cv.contourArea(c);
+    area = cv.contourArea(c)
     # Ignore contours that are too small or too large
     if area < 1e2 or 1e5 < area:
         continue
 
     # Draw each contour only for visualisation purposes
-    cv.drawContours(src, contours, i, (0, 0, 255), 2);
+    cv.drawContours(src, contours, i, (0, 0, 255), 2)
     # Find the orientation of each shape
     getOrientation(c, src)
 ## [contours]

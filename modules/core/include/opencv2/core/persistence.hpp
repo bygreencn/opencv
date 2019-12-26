@@ -526,6 +526,8 @@ public:
     */
     FileNode(const FileNode& node);
 
+    FileNode& operator=(const FileNode& node);
+
     /** @brief Returns element of a mapping node or a sequence node.
     @param nodename Name of an element in the mapping node.
     @returns Returns the element with the given identifier.
@@ -541,6 +543,11 @@ public:
     @param i Index of an element in the sequence node.
     */
     CV_WRAP_AS(at) FileNode operator[](int i) const;
+
+    /** @brief Returns keys of a mapping node.
+    @returns Keys of a mapping node.
+     */
+    CV_WRAP std::vector<String> keys() const;
 
     /** @brief Returns type of the node.
     @returns Type of the node. See FileNode::Type
@@ -592,8 +599,8 @@ public:
     Usually it is more convenient to use operator `>>` instead of this method.
     @param fmt Specification of each array element. See @ref format_spec "format specification"
     @param vec Pointer to the destination array.
-    @param len Number of elements to read. If it is greater than number of remaining elements then all
-    of them will be read.
+    @param len Number of bytes to read (buffer size limit). If it is greater than number of
+               remaining elements then all of them will be read.
      */
     void readRaw( const String& fmt, uchar* vec, size_t len ) const;
 
@@ -640,6 +647,8 @@ public:
     */
     FileNodeIterator(const FileNodeIterator& it);
 
+    FileNodeIterator& operator=(const FileNodeIterator& it);
+
     //! returns the currently observed element
     FileNode operator *() const;
     //! accesses the currently observed element methods
@@ -663,11 +672,12 @@ public:
     Usually it is more convenient to use operator `>>` instead of this method.
     @param fmt Specification of each array element. See @ref format_spec "format specification"
     @param vec Pointer to the destination array.
-    @param maxCount Number of elements to read. If it is greater than number of remaining elements then
-    all of them will be read.
+    @param len Number of bytes to read (buffer size limit). If it is greater than number of
+               remaining elements then all of them will be read.
+
      */
     FileNodeIterator& readRaw( const String& fmt, uchar* vec,
-                               size_t maxCount=(size_t)INT_MAX );
+                               size_t len=(size_t)INT_MAX );
 
     struct SeqReader
     {
@@ -1320,6 +1330,7 @@ inline FileNode FileStorage::getFirstTopLevelNode() const { FileNode r = root();
 inline FileNode::FileNode() : fs(0), node(0) {}
 inline FileNode::FileNode(const CvFileStorage* _fs, const CvFileNode* _node) : fs(_fs), node(_node) {}
 inline FileNode::FileNode(const FileNode& _node) : fs(_node.fs), node(_node.node) {}
+inline FileNode& FileNode::operator=(const FileNode& _node)  { fs = _node.fs; node = _node.node; return *this; }
 inline bool FileNode::empty() const    { return node   == 0;    }
 inline bool FileNode::isNone() const   { return type() == NONE; }
 inline bool FileNode::isSeq() const    { return type() == SEQ;  }

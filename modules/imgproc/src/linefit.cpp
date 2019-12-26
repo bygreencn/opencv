@@ -321,7 +321,7 @@ static void fitLine2D( const Point2f * points, int count, int dist,
     void (*calc_weights) (float *, int, float *) = 0;
     void (*calc_weights_param) (float *, int, float *, float) = 0;
     int i, j, k;
-    float _line[6], _lineprev[6];
+    float _line[4], _lineprev[4];
     float rdelta = reps != 0 ? reps : 1.0f;
     float adelta = aeps != 0 ? aeps : 0.01f;
     double min_err = DBL_MAX, err = 0;
@@ -408,8 +408,14 @@ static void fitLine2D( const Point2f * points, int count, int dist,
             }
             /* calculate distances */
             err = calcDist2D( points, count, _line, r );
-            if( err < EPS )
-                break;
+
+            if (err < min_err)
+            {
+                min_err = err;
+                memcpy(line, _line, 4 * sizeof(line[0]));
+                if (err < EPS)
+                    break;
+            }
 
             /* calculate weights */
             if( calc_weights )
@@ -550,8 +556,13 @@ static void fitLine3D( Point3f * points, int count, int dist,
             }
             /* calculate distances */
             err = calcDist3D( points, count, _line, r );
-            //if( err < FLT_EPSILON*count )
-            //    break;
+            if (err < min_err)
+            {
+                min_err = err;
+                memcpy(line, _line, 6 * sizeof(line[0]));
+                if (err < EPS)
+                    break;
+            }
 
             /* calculate weights */
             if( calc_weights )
@@ -596,7 +607,7 @@ static void fitLine3D( Point3f * points, int count, int dist,
 void cv::fitLine( InputArray _points, OutputArray _line, int distType,
                  double param, double reps, double aeps )
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     Mat points = _points.getMat();
 

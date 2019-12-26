@@ -55,15 +55,15 @@
 #include <windows.h>
 #include <guiddef.h>
 #include <mfidl.h>
-#include <Mfapi.h>
+#include <mfapi.h>
 #include <mfplay.h>
 #include <mfobjects.h>
 #include <tchar.h>
 #include <strsafe.h>
 #include <Mfreadwrite.h>
-#ifdef HAVE_DXVA
-#include <D3D11.h>
-#include <D3d11_4.h>
+#ifdef HAVE_MSMF_DXVA
+#include <d3d11.h>
+#include <d3d11_4.h>
 #endif
 #include <new>
 #include <map>
@@ -81,7 +81,7 @@
 #pragma comment(lib, "mfuuid")
 #pragma comment(lib, "Strmiids")
 #pragma comment(lib, "Mfreadwrite")
-#ifdef HAVE_DXVA
+#ifdef HAVE_MSMF_DXVA
 #pragma comment(lib, "d3d11")
 // MFCreateDXGIDeviceManager() is available since Win8 only.
 // To avoid OpenCV loading failure on Win7 use dynamic detection of this symbol.
@@ -99,9 +99,7 @@ static void init_MFCreateDXGIDeviceManager()
     pMFCreateDXGIDeviceManager_initialized = true;
 }
 #endif
-#if (WINVER >= 0x0602) // Available since Win 8
-#pragma comment(lib, "MinCore_Downlevel")
-#endif
+#pragma comment(lib, "Shlwapi.lib")
 #endif
 
 #include <mferror.h>
@@ -616,7 +614,7 @@ class SourceReaderCB : public IMFSourceReaderCallback
 {
 public:
     SourceReaderCB() :
-        m_nRefCount(1), m_hEvent(CreateEvent(NULL, FALSE, FALSE, NULL)), m_bEOS(FALSE), m_hrStatus(S_OK), m_dwStreamIndex(0)
+        m_nRefCount(0), m_hEvent(CreateEvent(NULL, FALSE, FALSE, NULL)), m_bEOS(FALSE), m_hrStatus(S_OK), m_reader(NULL), m_dwStreamIndex(0)
     {
     }
 
@@ -677,7 +675,7 @@ public:
     BOOL                m_bEOS;
     HRESULT             m_hrStatus;
 
-    _ComPtr<IMFSourceReader> m_reader;
+    IMFSourceReader *m_reader;
     DWORD m_dwStreamIndex;
     _ComPtr<IMFSample>  m_lastSample;
 };
@@ -701,7 +699,7 @@ public:
     virtual bool grabFrame() CV_OVERRIDE;
     virtual bool retrieveFrame(int, cv::OutputArray) CV_OVERRIDE;
     virtual bool isOpened() const CV_OVERRIDE { return isOpen; }
-    virtual int getCaptureDomain() CV_OVERRIDE { return CV_CAP_MSMF; } // Return the type of the capture object: CV_CAP_VFW, etc...
+    virtual int getCaptureDomain() CV_OVERRIDE { return CV_CAP_MSMF; }
 protected:
     double getFramerate(MediaType MT) const;
     bool configureOutput(UINT32 width, UINT32 height, double prefFramerate, UINT32 aspectRatioN, UINT32 aspectRatioD, int outFormat, bool convertToFormat);
@@ -712,7 +710,7 @@ protected:
     cv::String filename;
     int camid;
     MSMFCapture_Mode captureMode;
-#ifdef HAVE_DXVA
+#ifdef HAVE_MSMF_DXVA
     _ComPtr<ID3D11Device> D3DDev;
     _ComPtr<IMFDXGIDeviceManager> D3DMgr;
 #endif
@@ -737,7 +735,7 @@ CvCapture_MSMF::CvCapture_MSMF():
     filename(""),
     camid(-1),
     captureMode(MODE_SW),
-#ifdef HAVE_DXVA
+#ifdef HAVE_MSMF_DXVA
     D3DDev(NULL),
     D3DMgr(NULL),
 #endif
@@ -776,7 +774,7 @@ void CvCapture_MSMF::close()
 
 bool CvCapture_MSMF::configureHW(bool enable)
 {
-#ifdef HAVE_DXVA
+#ifdef HAVE_MSMF_DXVA
     if ((enable && D3DMgr && D3DDev) || (!enable && !D3DMgr && !D3DDev))
         return true;
     if (!pMFCreateDXGIDeviceManager_initialized)
@@ -973,7 +971,7 @@ bool CvCapture_MSMF::open(int _index)
                             SUCCEEDED(srAttr->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, FALSE)) &&
                             SUCCEEDED(srAttr->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE)))
                         {
-#ifdef HAVE_DXVA
+#ifdef HAVE_MSMF_DXVA
                             if (D3DMgr)
                                 srAttr->SetUnknown(MF_SOURCE_READER_D3D_MANAGER, D3DMgr.Get());
 #endif
@@ -1024,7 +1022,7 @@ bool CvCapture_MSMF::open(const cv::String& _filename)
         SUCCEEDED(srAttr->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, true))
         )
     {
-#ifdef HAVE_DXVA
+#ifdef HAVE_MSMF_DXVA
         if(D3DMgr)
             srAttr->SetUnknown(MF_SOURCE_READER_D3D_MANAGER, D3DMgr.Get());
 #endif
@@ -1140,7 +1138,7 @@ bool CvCapture_MSMF::grabFrame()
         if (!reader->m_reader)
         {
             // Initiate capturing with async callback
-            reader->m_reader = videoFileSource;
+            reader->m_reader = videoFileSource.Get();
             reader->m_dwStreamIndex = dwStreamIndex;
             if (FAILED(hr = videoFileSource->ReadSample(dwStreamIndex, 0, NULL, NULL, NULL, NULL)))
             {
@@ -1195,7 +1193,7 @@ bool CvCapture_MSMF::grabFrame()
         {
             if (streamIndex != dwStreamIndex)
             {
-                CV_LOG_DEBUG(NULL, "videoio(MSMF): Wrong stream readed. Abort capturing");
+                CV_LOG_DEBUG(NULL, "videoio(MSMF): Wrong stream read. Abort capturing");
                 close();
             }
             else if (flags & MF_SOURCE_READERF_ERROR)
@@ -1955,6 +1953,7 @@ public:
     virtual bool setProperty(int, double) { return false; }
     virtual bool isOpened() const { return initiated; }
 
+    int getCaptureDomain() const CV_OVERRIDE { return cv::CAP_MSMF; }
 private:
     Media_Foundation& MF;
     UINT32 videoWidth;

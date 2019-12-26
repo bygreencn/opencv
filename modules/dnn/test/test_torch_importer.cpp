@@ -53,13 +53,13 @@ using namespace cv;
 using namespace cv::dnn;
 
 template<typename TStr>
-static std::string _tf(TStr filename, bool inTorchDir = true)
+static std::string _tf(TStr filename, bool inTorchDir = true, bool required = true)
 {
     String path = "dnn/";
     if (inTorchDir)
         path += "torch/";
     path += filename;
-    return findDataFile(path, false);
+    return findDataFile(path, required);
 }
 
 TEST(Torch_Importer, simple_read)
@@ -73,7 +73,7 @@ class Test_Torch_layers : public DNNTestLayer
 {
 public:
     void runTorchNet(const String& prefix, String outLayerName = "",
-                     bool check2ndBlob = false, bool isBinary = false,
+                     bool check2ndBlob = false, bool isBinary = false, bool evaluate = true,
                      double l1 = 0.0, double lInf = 0.0)
     {
         String suffix = (isBinary) ? ".dat" : ".txt";
@@ -84,7 +84,7 @@ public:
 
         checkBackend(backend, target, &inp, &outRef);
 
-        Net net = readNetFromTorch(_tf(prefix + "_net" + suffix), isBinary);
+        Net net = readNetFromTorch(_tf(prefix + "_net" + suffix), isBinary, evaluate);
         ASSERT_FALSE(net.empty());
 
         net.setPreferableBackend(backend);
@@ -100,7 +100,7 @@ public:
         lInf = lInf ? lInf : default_lInf;
         normAssert(outRef, outBlobs[0], "", l1, lInf);
 
-        if (check2ndBlob && backend != DNN_BACKEND_INFERENCE_ENGINE)
+        if (check2ndBlob && backend == DNN_BACKEND_OPENCV)
         {
             Mat out2 = outBlobs[1];
             Mat ref2 = readTorchBlob(_tf(prefix + "_output_2" + suffix), isBinary);
@@ -111,16 +111,16 @@ public:
 
 TEST_P(Test_Torch_layers, run_convolution)
 {
-    if ((backend == DNN_BACKEND_INFERENCE_ENGINE && target != DNN_TARGET_CPU) ||
-        (backend == DNN_BACKEND_OPENCV && target == DNN_TARGET_OPENCL_FP16))
-        throw SkipTestException("");
-    runTorchNet("net_conv", "", false, true);
+    // Output reference values are in range [23.4018, 72.0181]
+    double l1 = (target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD) ? 0.08 : default_l1;
+    double lInf = (target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD) ? 0.42 : default_lInf;
+    runTorchNet("net_conv", "", false, true, true, l1, lInf);
 }
 
 TEST_P(Test_Torch_layers, run_pool_max)
 {
     if (backend == DNN_BACKEND_OPENCV && target == DNN_TARGET_OPENCL_FP16)
-        throw SkipTestException("");
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_OPENCL_FP16);
     runTorchNet("net_pool_max", "", true);
 }
 
@@ -129,32 +129,42 @@ TEST_P(Test_Torch_layers, run_pool_ave)
     runTorchNet("net_pool_ave");
 }
 
-TEST_P(Test_Torch_layers, run_reshape)
+TEST_P(Test_Torch_layers, run_reshape_change_batch_size)
 {
     runTorchNet("net_reshape");
+}
+
+TEST_P(Test_Torch_layers, run_reshape)
+{
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && target == DNN_TARGET_MYRIAD)
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_MYRIAD, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER);
     runTorchNet("net_reshape_batch");
     runTorchNet("net_reshape_channels", "", false, true);
 }
 
 TEST_P(Test_Torch_layers, run_reshape_single_sample)
 {
-    if (backend == DNN_BACKEND_INFERENCE_ENGINE && target == DNN_TARGET_OPENCL_FP16)
-        throw SkipTestException("");
-    runTorchNet("net_reshape_single_sample", "", false, false,
-                (target == DNN_TARGET_MYRIAD || target == DNN_TARGET_OPENCL_FP16) ? 0.0052 : 0.0);
+    // Reference output values in range [14.4586, 18.4492].
+    runTorchNet("net_reshape_single_sample", "", false, false, true,
+                (target == DNN_TARGET_MYRIAD || target == DNN_TARGET_OPENCL_FP16) ? 0.033 : default_l1,
+                (target == DNN_TARGET_MYRIAD || target == DNN_TARGET_OPENCL_FP16) ? 0.05 : default_lInf);
 }
 
 TEST_P(Test_Torch_layers, run_linear)
 {
     if (backend == DNN_BACKEND_OPENCV && target == DNN_TARGET_OPENCL_FP16)
-        throw SkipTestException("");
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_OPENCL_FP16);
     runTorchNet("net_linear_2d");
 }
 
 TEST_P(Test_Torch_layers, run_concat)
 {
     runTorchNet("net_concat", "l5_torchMerge");
-    runTorchNet("net_depth_concat", "", false, true, 0.0,
+}
+
+TEST_P(Test_Torch_layers, run_depth_concat)
+{
+    runTorchNet("net_depth_concat", "", false, true, true, 0.0,
                 target == DNN_TARGET_OPENCL_FP16 ? 0.021 : 0.0);
 }
 
@@ -166,6 +176,7 @@ TEST_P(Test_Torch_layers, run_deconv)
 TEST_P(Test_Torch_layers, run_batch_norm)
 {
     runTorchNet("net_batch_norm", "", false, true);
+    runTorchNet("net_batch_norm_train", "", false, true, false);
 }
 
 TEST_P(Test_Torch_layers, net_prelu)
@@ -198,9 +209,9 @@ TEST_P(Test_Torch_layers, net_lp_pooling)
 
 TEST_P(Test_Torch_layers, net_conv_gemm_lrn)
 {
-    if (backend == DNN_BACKEND_INFERENCE_ENGINE && target == DNN_TARGET_MYRIAD)
-        throw SkipTestException("");
-    runTorchNet("net_conv_gemm_lrn", "", false, true,
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && target == DNN_TARGET_MYRIAD)
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_MYRIAD, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER);
+    runTorchNet("net_conv_gemm_lrn", "", false, true, true,
                 target == DNN_TARGET_OPENCL_FP16 ? 0.046 : 0.0,
                 target == DNN_TARGET_OPENCL_FP16 ? 0.023 : 0.0);
 }
@@ -224,51 +235,120 @@ TEST_P(Test_Torch_layers, net_padding)
 
 TEST_P(Test_Torch_layers, net_non_spatial)
 {
-    if (backend == DNN_BACKEND_INFERENCE_ENGINE &&
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 &&
         (target == DNN_TARGET_OPENCL || target == DNN_TARGET_OPENCL_FP16))
-        throw SkipTestException("");
+        applyTestTag(target == DNN_TARGET_OPENCL ? CV_TEST_TAG_DNN_SKIP_IE_OPENCL : CV_TEST_TAG_DNN_SKIP_IE_OPENCL_FP16,
+                     CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER, CV_TEST_TAG_DNN_SKIP_IE_VERSION);
     runTorchNet("net_non_spatial", "", false, true);
 }
 
 TEST_P(Test_Torch_layers, run_paralel)
 {
     if (backend != DNN_BACKEND_OPENCV || target != DNN_TARGET_CPU)
-        throw SkipTestException("");
+        throw SkipTestException("");  // TODO: Check this
     runTorchNet("net_parallel", "l5_torchMerge");
 }
 
 TEST_P(Test_Torch_layers, net_residual)
 {
+#if defined(INF_ENGINE_RELEASE) && INF_ENGINE_RELEASE == 2018050000
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && (target == DNN_TARGET_OPENCL ||
+                                                    target == DNN_TARGET_OPENCL_FP16))
+        applyTestTag(target == DNN_TARGET_OPENCL ? CV_TEST_TAG_DNN_SKIP_IE_OPENCL : CV_TEST_TAG_DNN_SKIP_IE_OPENCL_FP16,
+                     CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER, CV_TEST_TAG_DNN_SKIP_IE_VERSION);
+#endif
     runTorchNet("net_residual", "", false, true);
 }
 
-typedef testing::TestWithParam<Target> Test_Torch_nets;
+class Test_Torch_nets : public DNNTestLayer {};
 
 TEST_P(Test_Torch_nets, OpenFace_accuracy)
 {
+#if defined(INF_ENGINE_RELEASE) && INF_ENGINE_VER_MAJOR_EQ(2018050000)
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && target == DNN_TARGET_MYRIAD)
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_MYRIAD, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER);
+#endif
+    checkBackend();
+
     const string model = findDataFile("dnn/openface_nn4.small2.v1.t7", false);
     Net net = readNetFromTorch(model);
 
-    net.setPreferableBackend(DNN_BACKEND_OPENCV);
-    net.setPreferableTarget(GetParam());
+    net.setPreferableBackend(backend);
+    net.setPreferableTarget(target);
 
-    Mat sample = imread(findDataFile("cv/shared/lena.png", false));
+    Mat sample = imread(findDataFile("cv/shared/lena.png"));
     Mat sampleF32(sample.size(), CV_32FC3);
     sample.convertTo(sampleF32, sampleF32.type());
     sampleF32 /= 255;
     resize(sampleF32, sampleF32, Size(96, 96), 0, 0, INTER_NEAREST);
 
-    Mat inputBlob = blobFromImage(sampleF32);
+    Mat inputBlob = blobFromImage(sampleF32, 1.0, Size(), Scalar(), /*swapRB*/true);
 
     net.setInput(inputBlob);
     Mat out = net.forward();
 
+    // Reference output values are in range [-0.17212, 0.263492]
+    // on Myriad problem layer: l4_Pooling - does not use pads_begin
+    float l1 = (target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD) ? 2e-3 : 1e-5;
+    float lInf = (target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD) ? 5e-3 : 1e-3;
     Mat outRef = readTorchBlob(_tf("net_openface_output.dat"), true);
-    normAssert(out, outRef);
+    normAssert(out, outRef, "", l1, lInf);
+}
+
+static Mat getSegmMask(const Mat& scores)
+{
+    const int rows = scores.size[2];
+    const int cols = scores.size[3];
+    const int numClasses = scores.size[1];
+
+    Mat maxCl = Mat::zeros(rows, cols, CV_8UC1);
+    Mat maxVal(rows, cols, CV_32FC1, Scalar(0));
+    for (int ch = 0; ch < numClasses; ch++)
+    {
+        for (int row = 0; row < rows; row++)
+        {
+            const float *ptrScore = scores.ptr<float>(0, ch, row);
+            uint8_t *ptrMaxCl = maxCl.ptr<uint8_t>(row);
+            float *ptrMaxVal = maxVal.ptr<float>(row);
+            for (int col = 0; col < cols; col++)
+            {
+                if (ptrScore[col] > ptrMaxVal[col])
+                {
+                    ptrMaxVal[col] = ptrScore[col];
+                    ptrMaxCl[col] = (uchar)ch;
+                }
+            }
+        }
+    }
+    return maxCl;
+}
+
+// Computer per-class intersection over union metric.
+static void normAssertSegmentation(const Mat& ref, const Mat& test)
+{
+    CV_Assert_N(ref.dims == 4, test.dims == 4);
+    const int numClasses = ref.size[1];
+    CV_Assert(numClasses == test.size[1]);
+
+    Mat refMask = getSegmMask(ref);
+    Mat testMask = getSegmMask(test);
+    EXPECT_EQ(countNonZero(refMask != testMask), 0);
 }
 
 TEST_P(Test_Torch_nets, ENet_accuracy)
 {
+    applyTestTag(target == DNN_TARGET_CPU ? "" : CV_TEST_TAG_MEMORY_512MB);
+    checkBackend();
+    if (backend == DNN_BACKEND_OPENCV && target == DNN_TARGET_OPENCL_FP16)
+        throw SkipTestException("");
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && target != DNN_TARGET_CPU)
+    {
+        if (target == DNN_TARGET_OPENCL_FP16) applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_OPENCL_FP16, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER);
+        if (target == DNN_TARGET_OPENCL)      applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_OPENCL, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER);
+        if (target == DNN_TARGET_MYRIAD)      applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_MYRIAD, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER);
+        throw SkipTestException("");
+    }
+
     Net net;
     {
         const string model = findDataFile("dnn/Enet-model-best.net", false);
@@ -276,11 +356,11 @@ TEST_P(Test_Torch_nets, ENet_accuracy)
         ASSERT_TRUE(!net.empty());
     }
 
-    net.setPreferableBackend(DNN_BACKEND_OPENCV);
-    net.setPreferableTarget(GetParam());
+    net.setPreferableBackend(backend);
+    net.setPreferableTarget(target);
 
     Mat sample = imread(_tf("street.png", false));
-    Mat inputBlob = blobFromImage(sample, 1./255);
+    Mat inputBlob = blobFromImage(sample, 1./255, Size(), Scalar(), /*swapRB*/true);
 
     net.setInput(inputBlob, "");
     Mat out = net.forward();
@@ -288,14 +368,16 @@ TEST_P(Test_Torch_nets, ENet_accuracy)
     // Due to numerical instability in Pooling-Unpooling layers (indexes jittering)
     // thresholds for ENet must be changed. Accuracy of results was checked on
     // Cityscapes dataset and difference in mIOU with Torch is 10E-4%
-    normAssert(ref, out, "", 0.00044, 0.44);
+    normAssert(ref, out, "", 0.00044, /*target == DNN_TARGET_CPU ? 0.453 : */0.552);
+    normAssertSegmentation(ref, out);
 
     const int N = 3;
     for (int i = 0; i < N; i++)
     {
         net.setInput(inputBlob, "");
         Mat out = net.forward();
-        normAssert(ref, out, "", 0.00044, 0.44);
+        normAssert(ref, out, "", 0.00044, /*target == DNN_TARGET_CPU ? 0.453 : */0.552);
+        normAssertSegmentation(ref, out);
     }
 }
 
@@ -314,6 +396,21 @@ TEST_P(Test_Torch_nets, ENet_accuracy)
 //   -model models/instance_norm/feathers.t7
 TEST_P(Test_Torch_nets, FastNeuralStyle_accuracy)
 {
+#if defined INF_ENGINE_RELEASE
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && target == DNN_TARGET_MYRIAD
+            && getInferenceEngineVPUType() == CV_DNN_INFERENCE_ENGINE_VPU_TYPE_MYRIAD_X)
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_MYRIAD_X, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER);
+#endif
+
+    checkBackend();
+
+#if defined(INF_ENGINE_RELEASE)
+#if INF_ENGINE_RELEASE <= 2018050000
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && target == DNN_TARGET_OPENCL)
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_OPENCL, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER, CV_TEST_TAG_DNN_SKIP_IE_VERSION);
+#endif
+#endif
+
     std::string models[] = {"dnn/fast_neural_style_eccv16_starry_night.t7",
                             "dnn/fast_neural_style_instance_norm_feathers.t7"};
     std::string targets[] = {"dnn/lena_starry_night.png", "dnn/lena_feathers.png"};
@@ -323,10 +420,10 @@ TEST_P(Test_Torch_nets, FastNeuralStyle_accuracy)
         const string model = findDataFile(models[i], false);
         Net net = readNetFromTorch(model);
 
-        net.setPreferableBackend(DNN_BACKEND_OPENCV);
-        net.setPreferableTarget(GetParam());
+        net.setPreferableBackend(backend);
+        net.setPreferableTarget(target);
 
-        Mat img = imread(findDataFile("dnn/googlenet_1.png", false));
+        Mat img = imread(findDataFile("dnn/googlenet_1.png"));
         Mat inputBlob = blobFromImage(img, 1.0, Size(), Scalar(103.939, 116.779, 123.68), false);
 
         net.setInput(inputBlob);
@@ -341,12 +438,20 @@ TEST_P(Test_Torch_nets, FastNeuralStyle_accuracy)
         Mat ref = imread(findDataFile(targets[i]));
         Mat refBlob = blobFromImage(ref, 1.0, Size(), Scalar(), false);
 
-        normAssert(out, refBlob, "", 0.5, 1.1);
+        if (target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD)
+        {
+            double normL1 = cvtest::norm(refBlob, out, cv::NORM_L1) / refBlob.total();
+            if (target == DNN_TARGET_MYRIAD)
+                EXPECT_LE(normL1, 4.0f);
+            else
+                EXPECT_LE(normL1, 0.6f);
+        }
+        else
+            normAssert(out, refBlob, "", 0.5, 1.1);
     }
 }
 
-INSTANTIATE_TEST_CASE_P(/**/, Test_Torch_nets, availableDnnTargets());
-
+INSTANTIATE_TEST_CASE_P(/**/, Test_Torch_nets, dnnBackendsAndTargets());
 
 // Test a custom layer
 // https://github.com/torch/nn/blob/master/doc/convolution.md#nn.SpatialUpSamplingNearest
@@ -377,15 +482,22 @@ public:
         return false;
     }
 
-    virtual void forward(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals) CV_OVERRIDE
+    void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays) CV_OVERRIDE
     {
-        Mat& inp = *inputs[0];
+        CV_TRACE_FUNCTION();
+        CV_TRACE_ARG_VALUE(name, "name", name.c_str());
+
+        std::vector<Mat> inputs, outputs;
+        inputs_arr.getMatVector(inputs);
+        outputs_arr.getMatVector(outputs);
+
+        Mat& inp = inputs[0];
         Mat& out = outputs[0];
         const int outHeight = out.size[2];
         const int outWidth = out.size[3];
-        for (size_t n = 0; n < inputs[0]->size[0]; ++n)
+        for (size_t n = 0; n < inp.size[0]; ++n)
         {
-            for (size_t ch = 0; ch < inputs[0]->size[1]; ++ch)
+            for (size_t ch = 0; ch < inp.size[1]; ++ch)
             {
                 resize(getPlane(inp, n, ch), getPlane(out, n, ch),
                        Size(outWidth, outHeight), 0, 0, INTER_NEAREST);

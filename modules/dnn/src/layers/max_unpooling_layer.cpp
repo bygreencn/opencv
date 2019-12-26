@@ -35,8 +35,7 @@ public:
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
         return backendId == DNN_BACKEND_OPENCV ||
-               backendId == DNN_BACKEND_HALIDE && haveHalide() &&
-               !poolPad.width && !poolPad.height;
+               (backendId == DNN_BACKEND_HALIDE && haveHalide() && !poolPad.width && !poolPad.height);
     }
 
     bool getMemoryShapes(const std::vector<MatShape> &inputs,
@@ -44,12 +43,18 @@ public:
                          std::vector<MatShape> &outputs,
                          std::vector<MatShape> &internals) const CV_OVERRIDE
     {
-        CV_Assert(inputs.size() == 2);
+        CV_Assert(inputs.size() == 2 || inputs.size() == 3);
         CV_Assert(total(inputs[0]) == total(inputs[1]));
 
-        MatShape outShape = inputs[0];
-        outShape[2] = (outShape[2] - 1) * poolStride.height + poolKernel.height - 2 * poolPad.height;
-        outShape[3] = (outShape[3] - 1) * poolStride.width + poolKernel.width - 2 * poolPad.width;
+        MatShape outShape;
+        if (inputs.size() == 2)
+        {
+            outShape = inputs[0];
+            outShape[2] = (outShape[2] - 1) * poolStride.height + poolKernel.height - 2 * poolPad.height;
+            outShape[3] = (outShape[3] - 1) * poolStride.width + poolKernel.width - 2 * poolPad.width;
+        }
+        else
+            outShape = inputs[2];
 
         outputs.clear();
         outputs.push_back(outShape);
@@ -62,17 +67,19 @@ public:
         CV_TRACE_FUNCTION();
         CV_TRACE_ARG_VALUE(name, "name", name.c_str());
 
-        Layer::forward_fallback(inputs_arr, outputs_arr, internals_arr);
-    }
+        if (inputs_arr.depth() == CV_16S)
+        {
+            forward_fallback(inputs_arr, outputs_arr, internals_arr);
+            return;
+        }
 
-    void forward(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals) CV_OVERRIDE
-    {
-        CV_TRACE_FUNCTION();
-        CV_TRACE_ARG_VALUE(name, "name", name.c_str());
+        std::vector<Mat> inputs, outputs;
+        inputs_arr.getMatVector(inputs);
+        outputs_arr.getMatVector(outputs);
 
-        CV_Assert(inputs.size() == 2);
-        Mat& input = *inputs[0];
-        Mat& indices = *inputs[1];
+        CV_Assert(inputs.size() == 2 || inputs.size() == 3);
+        Mat& input = inputs[0];
+        Mat& indices = inputs[1];
 
         CV_Assert(input.total() == indices.total());
         CV_Assert(input.size[0] == 1);

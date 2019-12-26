@@ -80,7 +80,7 @@ static cv::Mutex _icvInitFFMPEG_mutex;
 static const HMODULE cv_GetCurrentModule()
 {
     HMODULE h = 0;
-#if _WIN32_WINNT >= 0x0501
+#if _WIN32_WINNT >= 0x0501 && (!defined(WINAPI_FAMILY) || (WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP))
     ::GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
         reinterpret_cast<LPCTSTR>(cv_GetCurrentModule),
         &h);
@@ -288,6 +288,8 @@ public:
     CvVideoWriter_FFMPEG_proxy() { ffmpegWriter = 0; }
     CvVideoWriter_FFMPEG_proxy(const cv::String& filename, int fourcc, double fps, cv::Size frameSize, bool isColor) { ffmpegWriter = 0; open(filename, fourcc, fps, frameSize, isColor); }
     virtual ~CvVideoWriter_FFMPEG_proxy() { close(); }
+
+    int getCaptureDomain() const CV_OVERRIDE { return cv::CAP_FFMPEG; }
 
     virtual void write(cv::InputArray image ) CV_OVERRIDE
     {

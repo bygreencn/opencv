@@ -10,8 +10,11 @@ Implementation of Batch Normalization layer.
 */
 
 #include "../precomp.hpp"
+#include "layers_common.hpp"
 #include "../op_halide.hpp"
 #include "../op_inf_engine.hpp"
+#include "../ie_ngraph.hpp"
+
 #include <opencv2/dnn/shape_utils.hpp>
 
 #ifdef HAVE_OPENCL
@@ -28,8 +31,11 @@ class BatchNormLayerImpl CV_FINAL : public BatchNormLayer
 public:
     Mat weights_, bias_;
     UMat umat_weight, umat_bias;
+    mutable int dims;
+
 
     BatchNormLayerImpl(const LayerParams& params)
+        : dims(-1)
     {
         setParamsFrom(params);
         CV_Assert(blobs.size() >= 2);
@@ -48,7 +54,7 @@ public:
 
         float varMeanScale = 1.f;
         if (!hasWeights && !hasBias && blobs.size() > 2 && useGlobalStats) {
-            CV_Assert(blobs.size() == 3, blobs[2].type() == CV_32F);
+            CV_Assert(blobs.size() == 3); CV_CheckTypeEQ(blobs[2].type(), CV_32FC1, "");
             varMeanScale = blobs[2].at<float>(0);
             if (varMeanScale != 0)
                 varMeanScale = 1/varMeanScale;
@@ -141,6 +147,7 @@ public:
                          std::vector<MatShape> &outputs,
                          std::vector<MatShape> &internals) const CV_OVERRIDE
     {
+        dims = inputs[0].size();
         if (!useGlobalStats && inputs[0][0] != 1)
             CV_Error(Error::StsNotImplemented, "Batch normalization in training mode with batch size > 1");
         Layer::getMemoryShapes(inputs, requiredOutputs, outputs, internals);
@@ -149,9 +156,9 @@ public:
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
-        return backendId == DNN_BACKEND_OPENCV ||
-               backendId == DNN_BACKEND_HALIDE && haveHalide() ||
-               backendId == DNN_BACKEND_INFERENCE_ENGINE && haveInfEngine();
+        return (backendId == DNN_BACKEND_OPENCV) ||
+               (backendId == DNN_BACKEND_HALIDE && haveHalide()) ||
+               ((backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 || backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH) && haveInfEngine() && (preferableTarget == DNN_TARGET_CPU || dims == 4));
     }
 
 #ifdef HAVE_OPENCL
@@ -172,16 +179,17 @@ public:
 
         if (umat_weight.empty())
         {
-            umat_weight = weights_.getUMat(ACCESS_READ);
-            umat_bias = bias_.getUMat(ACCESS_READ);
+            weights_.copyTo(umat_weight);
+            bias_.copyTo(umat_bias);
         }
 
         UMat &inpBlob = inputs[0];
-        CV_Assert(inpBlob.dims == 2 || inpBlob.dims == 4);
         int groups = inpBlob.size[0];
         int channels = inpBlob.size[1];
-        int rows = inpBlob.dims > 2 ? inpBlob.size[2] : 1;
-        int cols = inpBlob.dims > 2 ? inpBlob.size[3] : 1;
+        int planeSize = 1;
+        for (size_t i = 2; i < inpBlob.dims; i++) {
+            planeSize *= inpBlob.size[i];
+        }
 
         String opts = (use_half) ? " -DDtype=half" : " -DDtype=float";
         for (size_t ii = 0; ii < outputs.size(); ii++)
@@ -195,7 +203,7 @@ public:
             }
             else
             {
-                MatShape s = shape(groups * channels, rows * cols);
+                MatShape s = shape(groups * channels, planeSize);
                 UMat src = inputs[ii].reshape(1, s.size(), &s[0]);
                 UMat dst = outputs[ii].reshape(1, s.size(), &s[0]);
                 int number = (s[1] % 8 == 0) ? 8 : ((s[1] % 4 == 0) ? 4 : 1);
@@ -230,25 +238,27 @@ public:
         CV_TRACE_FUNCTION();
         CV_TRACE_ARG_VALUE(name, "name", name.c_str());
 
-        CV_OCL_RUN(IS_DNN_OPENCL_TARGET(preferableTarget) &&
-                   OCL_PERFORMANCE_CHECK(ocl::Device::getDefault().isIntel()),
+        CV_OCL_RUN(IS_DNN_OPENCL_TARGET(preferableTarget),
                    forward_ocl(inputs_arr, outputs_arr, internals_arr))
 
-        Layer::forward_fallback(inputs_arr, outputs_arr, internals_arr);
-    }
+        if (inputs_arr.depth() == CV_16S)
+        {
+            forward_fallback(inputs_arr, outputs_arr, internals_arr);
+            return;
+        }
 
-    void forward(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals) CV_OVERRIDE
-    {
-        CV_TRACE_FUNCTION();
-        CV_TRACE_ARG_VALUE(name, "name", name.c_str());
+        std::vector<Mat> inputs, outputs;
+        inputs_arr.getMatVector(inputs);
+        outputs_arr.getMatVector(outputs);
 
         CV_Assert(blobs.size() >= 2);
         CV_Assert(inputs.size() == 1);
 
-        Mat &inpBlob = *inputs[0];
-        CV_Assert(inpBlob.dims == 2 || inpBlob.dims == 4);
-        int rows = inpBlob.dims > 2 ? inpBlob.size[2] : 1;
-        int cols = inpBlob.dims > 2 ? inpBlob.size[3] : 1;
+        Mat &inpBlob = inputs[0];
+        int planeSize = 1;
+        for (size_t i = 2; i < inpBlob.dims; i++) {
+            planeSize *= inpBlob.size[i];
+        }
 
         for (size_t ii = 0; ii < outputs.size(); ii++)
         {
@@ -260,8 +270,8 @@ public:
                 {
                     float w = weights_.at<float>(n);
                     float b = bias_.at<float>(n);
-                    Mat inpBlobPlane(rows, cols, CV_32F, inpBlob.ptr<float>(num, n));
-                    Mat outBlobPlane(rows, cols, CV_32F, outBlob.ptr<float>(num, n));
+                    Mat inpBlobPlane(1, planeSize, CV_32F, inpBlob.ptr<float>(num, n));
+                    Mat outBlobPlane(1, planeSize, CV_32F, outBlob.ptr<float>(num, n));
                     inpBlobPlane.convertTo(outBlobPlane, CV_32F, w, b);
                 }
             }
@@ -283,10 +293,10 @@ public:
                 v_float32x4 x1 = v_load(srcptr + i + 4);
                 v_float32x4 x2 = v_load(srcptr + i + 8);
                 v_float32x4 x3 = v_load(srcptr + i + 12);
-                x0 = v_muladd(x0, w, b);
-                x1 = v_muladd(x1, w, b);
-                x2 = v_muladd(x2, w, b);
-                x3 = v_muladd(x3, w, b);
+                x0 = v_muladd(x0, wV, bV);
+                x1 = v_muladd(x1, wV, bV);
+                x2 = v_muladd(x2, wV, bV);
+                x3 = v_muladd(x3, wV, bV);
                 v_store(dstptr + i, x0);
                 v_store(dstptr + i + 4, x1);
                 v_store(dstptr + i + 8, x2);
@@ -344,28 +354,35 @@ public:
     }
 #endif  // HAVE_HALIDE
 
+#ifdef HAVE_INF_ENGINE
     virtual Ptr<BackendNode> initInfEngine(const std::vector<Ptr<BackendWrapper> >&) CV_OVERRIDE
     {
-#ifdef HAVE_INF_ENGINE
-        InferenceEngine::LayerParams lp;
-        lp.name = name;
-        lp.type = "ScaleShift";
-        lp.precision = InferenceEngine::Precision::FP32;
-        std::shared_ptr<InferenceEngine::ScaleShiftLayer> ieLayer(new InferenceEngine::ScaleShiftLayer(lp));
-
+        InferenceEngine::Builder::Layer ieLayer = InferenceEngine::Builder::ScaleShiftLayer(name);
         const size_t numChannels = weights_.total();
-        ieLayer->_weights = wrapToInfEngineBlob(weights_, {numChannels}, InferenceEngine::Layout::C);
-        ieLayer->_biases = wrapToInfEngineBlob(bias_, {numChannels}, InferenceEngine::Layout::C);
-
+        addConstantData("weights", wrapToInfEngineBlob(weights_, {numChannels}, InferenceEngine::Layout::C), ieLayer);
+        addConstantData("biases", wrapToInfEngineBlob(bias_, {numChannels}, InferenceEngine::Layout::C), ieLayer);
         return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
-#endif  // HAVE_INF_ENGINE
-        return Ptr<BackendNode>();
     }
+#endif  // HAVE_INF_ENGINE
+
+#ifdef HAVE_DNN_NGRAPH
+    virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs, const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        auto ieInpNode = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
+        std::vector<size_t> shape(ieInpNode->get_shape().size(), 1);
+        shape[1] = weights_.total();
+        auto weight = std::make_shared<ngraph::op::Constant>(ngraph::element::f32, ngraph::Shape(shape), weights_.data);
+        auto bias = std::make_shared<ngraph::op::Constant>(ngraph::element::f32, ngraph::Shape(shape), bias_.data);
+        auto scale_node = std::make_shared<ngraph::op::v1::Multiply>(ieInpNode, weight, ngraph::op::AutoBroadcastType::NUMPY);
+        auto scale_shift = std::make_shared<ngraph::op::v1::Add>(scale_node, bias, ngraph::op::AutoBroadcastType::NUMPY);
+        return Ptr<BackendNode>(new InfEngineNgraphNode(scale_shift));
+    }
+#endif  // HAVE_DNN_NGRAPH
 
     virtual int64 getFLOPS(const std::vector<MatShape> &inputs,
                            const std::vector<MatShape> &outputs) const CV_OVERRIDE
     {
-        (void)outputs; // suppress unused variable warning
+        CV_UNUSED(outputs); // suppress unused variable warning
 
         int64 flops = 0;
         for(int i = 0; i < inputs.size(); i++)

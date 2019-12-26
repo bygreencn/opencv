@@ -3,6 +3,7 @@
 // of this distribution and at http://opencv.org/license.html
 
 #include "precomp.hpp"
+#include "opencl_kernels_imgproc.hpp"
 #include "color.hpp"
 
 namespace cv
@@ -176,7 +177,7 @@ void cvtColorTwoPlane( InputArray _ysrc, InputArray _uvsrc, OutputArray _dst, in
 
 void cvtColor( InputArray _src, OutputArray _dst, int code, int dcn )
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     CV_Assert(!_src.empty());
 

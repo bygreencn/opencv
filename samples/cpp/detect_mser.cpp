@@ -36,11 +36,11 @@ using namespace cv;
 
 static void help()
 {
-    cout << "\n This program demonstrates how to use MSER to detect extremal regions \n"
-        "Usage: \n"
-        "  ./detect_mser <image1(without parameter a syntehtic image is used as default)>\n"
+    cout << "\nThis program demonstrates how to use MSER to detect extremal regions\n"
+        "Usage:\n"
+        "  ./detect_mser <image1(without parameter a synthetic image is used as default)>\n"
         "Press esc key when image window is active to change descriptor parameter\n"
-        "Press 2, 8, 4, 6, +,- or 5 keys in openGL windows to change view or use mouse\n";
+        "Press 2, 8, 4, 6, +, -, or 5 keys in openGL windows to change view or use mouse\n";
 }
 
 struct MSERParams
@@ -412,7 +412,7 @@ int main(int argc, char *argv[])
     string input = parser.get<string>("@input");
     if (!input.empty())
     {
-        imgOrig = imread(input, IMREAD_GRAYSCALE);
+        imgOrig = imread(samples::findFile(input), IMREAD_GRAYSCALE);
         blur(imgOrig, img, blurSize);
     }
     else
@@ -523,7 +523,7 @@ int main(int argc, char *argv[])
             imshow(winName, result);
             imshow("Original", img);
         }
-        catch (Exception& e)
+        catch (const Exception& e)
         {
             cout << "Feature: " << *itDesc << "\n";
             cout << e.msg << endl;

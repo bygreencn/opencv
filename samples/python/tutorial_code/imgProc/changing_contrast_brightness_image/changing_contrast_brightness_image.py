@@ -25,8 +25,8 @@ def gammaCorrection():
     res = cv.LUT(img_original, lookUpTable)
     ## [changing-contrast-brightness-gamma-correction]
 
-    img_gamma_corrected = cv.hconcat([img_original, res]);
-    cv.imshow("Gamma correction", img_gamma_corrected);
+    img_gamma_corrected = cv.hconcat([img_original, res])
+    cv.imshow("Gamma correction", img_gamma_corrected)
 
 def on_linear_transform_alpha_trackbar(val):
     global alpha
@@ -44,10 +44,10 @@ def on_gamma_correction_trackbar(val):
     gammaCorrection()
 
 parser = argparse.ArgumentParser(description='Code for Changing the contrast and brightness of an image! tutorial.')
-parser.add_argument('--input', help='Path to input image.', default='../data/lena.jpg')
+parser.add_argument('--input', help='Path to input image.', default='lena.jpg')
 args = parser.parse_args()
 
-img_original = cv.imread(args.input)
+img_original = cv.imread(cv.samples.findFile(args.input))
 if img_original is None:
     print('Could not open or find the image: ', args.input)
     exit(0)

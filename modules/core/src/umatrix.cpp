@@ -43,6 +43,8 @@
 #include "opencl_kernels_core.hpp"
 #include "umatrix.hpp"
 
+#include <opencv2/core/utils/tls.hpp>
+
 ///////////////////////////////// UMat implementation ///////////////////////////////
 
 namespace cv {
@@ -122,7 +124,7 @@ UMatData::~UMatData()
             }
         }
 #else
-        (void)showWarn;
+        CV_UNUSED(showWarn);
 #endif
         originalUMatData = NULL;
     }
@@ -367,11 +369,11 @@ UMat Mat::getUMat(int accessFlags, UMatUsageFlags usageFlags) const
         new_u->originalUMatData = u;
     }
     bool allocated = false;
-    CV_TRY
+    try
     {
         allocated = UMat::getStdAllocator()->allocate(new_u, accessFlags, usageFlags);
     }
-    CV_CATCH(cv::Exception, e)
+    catch (const cv::Exception& e)
     {
         fprintf(stderr, "Exception: %s\n", e.what());
     }
@@ -442,12 +444,12 @@ void UMat::create(int d, const int* _sizes, int _type, UMatUsageFlags _usageFlag
             a = a0;
             a0 = Mat::getDefaultAllocator();
         }
-        CV_TRY
+        try
         {
             u = a->allocate(dims, size, _type, 0, step.p, 0, usageFlags);
             CV_Assert(u != 0);
         }
-        CV_CATCH_ALL
+        catch(...)
         {
             if(a != a0)
                 u = a0->allocate(dims, size, _type, 0, step.p, 0, usageFlags);
@@ -872,7 +874,15 @@ void UMat::ndoffset(size_t* ofs) const
 
 void UMat::copyTo(OutputArray _dst) const
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
+
+#ifdef HAVE_CUDA
+    if (_dst.isGpuMat())
+    {
+        _dst.getGpuMat().upload(*this);
+        return;
+    }
+#endif
 
     int dtype = _dst.type();
     if( _dst.fixedType() && dtype != type() )
@@ -918,7 +928,7 @@ void UMat::copyTo(OutputArray _dst) const
 
 void UMat::copyTo(OutputArray _dst, InputArray _mask) const
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     if( _mask.empty() )
     {
@@ -967,7 +977,7 @@ void UMat::copyTo(OutputArray _dst, InputArray _mask) const
 
 void UMat::convertTo(OutputArray _dst, int _type, double alpha, double beta) const
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     bool noScale = std::fabs(alpha - 1) < DBL_EPSILON && std::fabs(beta) < DBL_EPSILON;
     int stype = type(), cn = CV_MAT_CN(stype);
@@ -1032,7 +1042,7 @@ void UMat::convertTo(OutputArray _dst, int _type, double alpha, double beta) con
 
 UMat& UMat::setTo(InputArray _value, InputArray _mask)
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     bool haveMask = !_mask.empty();
 #ifdef HAVE_OPENCL
@@ -1172,7 +1182,7 @@ static bool ocl_dot( InputArray _src1, InputArray _src2, double & res )
 
 double UMat::dot(InputArray m) const
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     CV_Assert(m.sameSize(*this) && m.type() == type());
 

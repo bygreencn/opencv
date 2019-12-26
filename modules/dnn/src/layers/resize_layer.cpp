@@ -9,6 +9,11 @@
 #include "../op_inf_engine.hpp"
 #include <opencv2/imgproc.hpp>
 
+#ifdef HAVE_DNN_NGRAPH
+#include "../ie_ngraph.hpp"
+#include <ngraph/op/experimental/layers/interpolate.hpp>
+#endif
+
 namespace cv { namespace dnn {
 
 class ResizeLayerImpl : public ResizeLayer
@@ -33,9 +38,7 @@ public:
         interpolation = params.get<String>("interpolation");
         CV_Assert(interpolation == "nearest" || interpolation == "bilinear");
 
-        bool alignCorners = params.get<bool>("align_corners", false);
-        if (alignCorners)
-            CV_Error(Error::StsNotImplemented, "Resize with align_corners=true is not implemented");
+        alignCorners = params.get<bool>("align_corners", false);
     }
 
     bool getMemoryShapes(const std::vector<MatShape> &inputs,
@@ -43,7 +46,7 @@ public:
                          std::vector<MatShape> &outputs,
                          std::vector<MatShape> &internals) const CV_OVERRIDE
     {
-        CV_Assert(inputs.size() == 1, inputs[0].size() == 4);
+        CV_Assert_N(inputs.size() == 1, inputs[0].size() == 4);
         outputs.resize(1, inputs[0]);
         outputs[0][2] = outHeight > 0 ? outHeight : (outputs[0][2] * zoomFactorHeight);
         outputs[0][3] = outWidth > 0 ? outWidth : (outputs[0][3] * zoomFactorWidth);
@@ -53,21 +56,37 @@ public:
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
-        if (backendId == DNN_BACKEND_INFERENCE_ENGINE)
-            return interpolation == "nearest" && preferableTarget != DNN_TARGET_MYRIAD;
-        else
-            return backendId == DNN_BACKEND_OPENCV;
+#ifdef HAVE_INF_ENGINE
+        if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 ||
+            backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
+        {
+            return (interpolation == "nearest" && scaleWidth == scaleHeight) ||
+                   (interpolation == "bilinear");
+        }
+#endif
+        return backendId == DNN_BACKEND_OPENCV;
     }
 
-    virtual void finalize(const std::vector<Mat*>& inputs, std::vector<Mat> &outputs) CV_OVERRIDE
+    virtual void finalize(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr) CV_OVERRIDE
     {
+        std::vector<Mat> inputs, outputs;
+        inputs_arr.getMatVector(inputs);
+        outputs_arr.getMatVector(outputs);
+
         if (!outWidth && !outHeight)
         {
             outHeight = outputs[0].size[2];
             outWidth = outputs[0].size[3];
         }
-        scaleHeight = static_cast<float>(inputs[0]->size[2]) / outHeight;
-        scaleWidth = static_cast<float>(inputs[0]->size[3]) / outWidth;
+        if (alignCorners && outHeight > 1)
+            scaleHeight = static_cast<float>(inputs[0].size[2] - 1) / (outHeight - 1);
+        else
+            scaleHeight = static_cast<float>(inputs[0].size[2]) / outHeight;
+
+        if (alignCorners && outWidth > 1)
+            scaleWidth = static_cast<float>(inputs[0].size[3] - 1) / (outWidth - 1);
+        else
+            scaleWidth = static_cast<float>(inputs[0].size[3]) / outWidth;
     }
 
     void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays internals_arr) CV_OVERRIDE
@@ -75,24 +94,27 @@ public:
         CV_TRACE_FUNCTION();
         CV_TRACE_ARG_VALUE(name, "name", name.c_str());
 
-        Layer::forward_fallback(inputs_arr, outputs_arr, internals_arr);
-    }
+        if (inputs_arr.depth() == CV_16S)
+        {
+            forward_fallback(inputs_arr, outputs_arr, internals_arr);
+            return;
+        }
 
-    void forward(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals) CV_OVERRIDE
-    {
-        CV_TRACE_FUNCTION();
-        CV_TRACE_ARG_VALUE(name, "name", name.c_str());
+        std::vector<Mat> inputs, outputs, internals;
+        inputs_arr.getMatVector(inputs);
+        outputs_arr.getMatVector(outputs);
+        internals_arr.getMatVector(internals);
 
-        if (outHeight == inputs[0]->size[2] && outWidth == inputs[0]->size[3])
+        if (outHeight == inputs[0].size[2] && outWidth == inputs[0].size[3])
             return;
 
-        Mat& inp = *inputs[0];
+        Mat& inp = inputs[0];
         Mat& out = outputs[0];
         if (interpolation == "nearest")
         {
-            for (size_t n = 0; n < inputs[0]->size[0]; ++n)
+            for (size_t n = 0; n < inputs[0].size[0]; ++n)
             {
-                for (size_t ch = 0; ch < inputs[0]->size[1]; ++ch)
+                for (size_t ch = 0; ch < inputs[0].size[1]; ++ch)
                 {
                     resize(getPlane(inp, n, ch), getPlane(out, n, ch),
                            Size(outWidth, outHeight), 0, 0, INTER_NEAREST);
@@ -106,7 +128,7 @@ public:
             const int inpSpatialSize = inpHeight * inpWidth;
             const int outSpatialSize = outHeight * outWidth;
             const int numPlanes = inp.size[0] * inp.size[1];
-            CV_Assert(inp.isContinuous(), out.isContinuous());
+            CV_Assert_N(inp.isContinuous(), out.isContinuous());
 
             Mat inpPlanes = inp.reshape(1, numPlanes * inpHeight);
             Mat outPlanes = out.reshape(1, numPlanes * outHeight);
@@ -146,26 +168,69 @@ public:
     virtual Ptr<BackendNode> initInfEngine(const std::vector<Ptr<BackendWrapper> >&) CV_OVERRIDE
     {
 #ifdef HAVE_INF_ENGINE
-        InferenceEngine::LayerParams lp;
-        lp.name = name;
-        lp.type = "Resample";
-        lp.precision = InferenceEngine::Precision::FP32;
-
-        std::shared_ptr<InferenceEngine::CNNLayer> ieLayer(new InferenceEngine::CNNLayer(lp));
-        ieLayer->params["type"] = "caffe.ResampleParameter.NEAREST";
-        ieLayer->params["antialias"] = "0";
-        ieLayer->params["width"] = cv::format("%d", outWidth);
-        ieLayer->params["height"] = cv::format("%d", outHeight);
-
+        InferenceEngine::Builder::Layer ieLayer(name);
+        ieLayer.setName(name);
+        if (interpolation == "nearest")
+        {
+            ieLayer.setType("Resample");
+            ieLayer.getParameters()["type"] = std::string("caffe.ResampleParameter.NEAREST");
+            ieLayer.getParameters()["antialias"] = false;
+            if (scaleWidth != scaleHeight)
+                CV_Error(Error::StsNotImplemented, "resample with sw != sh");
+            ieLayer.getParameters()["factor"] = 1.0f / scaleWidth;
+        }
+        else if (interpolation == "bilinear")
+        {
+            ieLayer.setType("Interp");
+            ieLayer.getParameters()["pad_beg"] = 0;
+            ieLayer.getParameters()["pad_end"] = 0;
+            ieLayer.getParameters()["align_corners"] = false;
+        }
+        else
+            CV_Error(Error::StsNotImplemented, "Unsupported interpolation: " + interpolation);
+        ieLayer.getParameters()["width"] = outWidth;
+        ieLayer.getParameters()["height"] = outHeight;
+        ieLayer.setInputPorts(std::vector<InferenceEngine::Port>(1));
+        ieLayer.setOutputPorts(std::vector<InferenceEngine::Port>(1));
         return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
 #endif  // HAVE_INF_ENGINE
         return Ptr<BackendNode>();
     }
 
+
+#ifdef HAVE_DNN_NGRAPH
+    virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs,
+                                        const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        auto& ieInpNode = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
+
+        ngraph::op::InterpolateAttrs attrs;
+        attrs.pads_begin.push_back(0);
+        attrs.pads_end.push_back(0);
+        attrs.axes = ngraph::AxisSet{2, 3};
+        attrs.align_corners = false;
+
+        if (interpolation == "nearest") {
+            attrs.mode = "nearest";
+            attrs.antialias = false;
+        } else if (interpolation == "bilinear") {
+            attrs.mode = "linear";
+        } else {
+            CV_Error(Error::StsNotImplemented, "Unsupported interpolation: " + interpolation);
+        }
+
+        std::vector<int64_t> shape = {outHeight, outWidth};
+        auto out_shape = std::make_shared<ngraph::op::Constant>(ngraph::element::i64, ngraph::Shape{2}, shape.data());
+        auto interp = std::make_shared<ngraph::op::Interpolate>(ieInpNode, out_shape, attrs);
+        return Ptr<BackendNode>(new InfEngineNgraphNode(interp));
+    }
+#endif  // HAVE_DNN_NGRAPH
+
 protected:
     int outWidth, outHeight, zoomFactorWidth, zoomFactorHeight;
     String interpolation;
     float scaleWidth, scaleHeight;
+    bool alignCorners;
 };
 
 
@@ -184,7 +249,7 @@ public:
                          std::vector<MatShape> &outputs,
                          std::vector<MatShape> &internals) const CV_OVERRIDE
     {
-        CV_Assert(inputs.size() == 1, inputs[0].size() == 4);
+        CV_Assert_N(inputs.size() == 1, inputs[0].size() == 4);
         outputs.resize(1, inputs[0]);
         outputs[0][2] = outHeight > 0 ? outHeight : (1 + zoomFactorHeight * (outputs[0][2] - 1));
         outputs[0][3] = outWidth > 0 ? outWidth : (1 + zoomFactorWidth * (outputs[0][3] - 1));
@@ -194,37 +259,64 @@ public:
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
-        return backendId == DNN_BACKEND_OPENCV || backendId == DNN_BACKEND_INFERENCE_ENGINE;
+#ifdef HAVE_INF_ENGINE
+        if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019
+            || backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
+            return true;
+#endif
+        return backendId == DNN_BACKEND_OPENCV;
     }
 
-    virtual void finalize(const std::vector<Mat*>& inputs, std::vector<Mat> &outputs) CV_OVERRIDE
+    virtual void finalize(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr) CV_OVERRIDE
     {
+        std::vector<Mat> inputs, outputs;
+        inputs_arr.getMatVector(inputs);
+        outputs_arr.getMatVector(outputs);
+
         if (!outWidth && !outHeight)
         {
             outHeight = outputs[0].size[2];
             outWidth = outputs[0].size[3];
         }
-        int inpHeight = inputs[0]->size[2];
-        int inpWidth = inputs[0]->size[3];
+        int inpHeight = inputs[0].size[2];
+        int inpWidth = inputs[0].size[3];
         scaleHeight = (outHeight > 1) ? (static_cast<float>(inpHeight - 1) / (outHeight - 1)) : 0.f;
         scaleWidth = (outWidth > 1) ? (static_cast<float>(inpWidth - 1) / (outWidth - 1)) : 0.f;
     }
 
+#ifdef HAVE_INF_ENGINE
     virtual Ptr<BackendNode> initInfEngine(const std::vector<Ptr<BackendWrapper> >&) CV_OVERRIDE
     {
-#ifdef HAVE_INF_ENGINE
-        InferenceEngine::LayerParams lp;
-        lp.name = name;
-        lp.type = "Interp";
-        lp.precision = InferenceEngine::Precision::FP32;
-
-        std::shared_ptr<InferenceEngine::CNNLayer> ieLayer(new InferenceEngine::CNNLayer(lp));
-        ieLayer->params["pad_beg"] = "0";
-        ieLayer->params["pad_end"] = "0";
+        InferenceEngine::Builder::Layer ieLayer(name);
+        ieLayer.setName(name);
+        ieLayer.setType("Interp");
+        ieLayer.getParameters()["pad_beg"] = 0;
+        ieLayer.getParameters()["pad_end"] = 0;
+        ieLayer.getParameters()["width"] = outWidth;
+        ieLayer.getParameters()["height"] = outHeight;
+        ieLayer.setInputPorts(std::vector<InferenceEngine::Port>(1));
+        ieLayer.setOutputPorts(std::vector<InferenceEngine::Port>(1));
         return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
-#endif  // HAVE_INF_ENGINE
-        return Ptr<BackendNode>();
     }
+#endif  // HAVE_INF_ENGINE
+
+#ifdef HAVE_DNN_NGRAPH
+    virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs,
+                                        const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        auto& ieInpNode = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
+        ngraph::op::InterpolateAttrs attrs;
+        attrs.pads_begin.push_back(0);
+        attrs.pads_end.push_back(0);
+        attrs.axes = ngraph::AxisSet{2, 3};
+        attrs.mode = "linear";
+        std::vector<int64_t> shape = {outHeight, outWidth};
+        auto out_shape = std::make_shared<ngraph::op::Constant>(ngraph::element::i64, ngraph::Shape{2}, shape.data());
+        auto interp = std::make_shared<ngraph::op::Interpolate>(ieInpNode, out_shape, attrs);
+        return Ptr<BackendNode>(new InfEngineNgraphNode(interp));
+    }
+#endif  // HAVE_DNN_NGRAPH
+
 };
 
 Ptr<Layer> InterpLayer::create(const LayerParams& params)

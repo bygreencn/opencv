@@ -238,11 +238,11 @@ static char* icvJSONParseValue( CvFileStorage* fs, char* ptr, CvFileNode* node )
                         CV_PARSE_ERROR("Invalid `dt` in Base64 header");
                 }
 
-                /* set base64_beg to beginning of base64 data */
-                base64_beg = &base64_buffer.at( base64::ENCODED_HEADER_SIZE );
 
                 if ( base64_buffer.size() > base64::ENCODED_HEADER_SIZE )
                 {
+                    /* set base64_beg to beginning of base64 data */
+                    base64_beg = &base64_buffer.at( base64::ENCODED_HEADER_SIZE );
                     if ( !base64::base64_valid( base64_beg, 0U, base64_end - base64_beg ) )
                         CV_PARSE_ERROR( "Invalid Base64 data." );
 
@@ -259,15 +259,9 @@ static char* icvJSONParseValue( CvFileStorage* fs, char* ptr, CvFileNode* node )
                         parser.flush();
                     }
 
-                    /* save as CvSeq */
-                    int elem_size = ::icvCalcStructSize(dt.c_str(), 0);
-                    if (total_byte_size % elem_size != 0)
-                        CV_PARSE_ERROR("Byte size not match elememt size");
-                    int elem_cnt = total_byte_size / elem_size;
-
                     /* after icvFSCreateCollection, node->tag == struct_flags */
                     icvFSCreateCollection(fs, CV_NODE_FLOW | CV_NODE_SEQ, node);
-                    base64::make_seq(binary_buffer.data(), elem_cnt, dt.c_str(), *node->data.seq);
+                    base64::make_seq(fs, binary_buffer.data(), total_byte_size, dt.c_str(), *node->data.seq);
                 }
                 else
                 {

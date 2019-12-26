@@ -54,7 +54,7 @@
 #endif
 
 #if defined __linux__ || defined __APPLE__ || defined __GLIBC__ \
-    || defined __HAIKU__
+    || defined __HAIKU__ || defined __EMSCRIPTEN__
     #include <unistd.h>
     #include <stdio.h>
     #include <sys/types.h>
@@ -129,27 +129,7 @@
 
 #include "parallel_impl.hpp"
 
-
-#ifndef CV__EXCEPTION_PTR
-#  if defined(__ANDROID__) && defined(ATOMIC_INT_LOCK_FREE) && ATOMIC_INT_LOCK_FREE < 2
-#    define CV__EXCEPTION_PTR 0  // Not supported, details: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=58938
-#  elif defined(CV_CXX11)
-#    define CV__EXCEPTION_PTR 1
-#  elif defined(_MSC_VER)
-#    define CV__EXCEPTION_PTR (_MSC_VER >= 1600)
-#  elif defined(__clang__)
-#    define CV__EXCEPTION_PTR 0  // C++11 only (see above)
-#  elif defined(__GNUC__) && defined(__GXX_EXPERIMENTAL_CXX0X__)
-#    define CV__EXCEPTION_PTR (__GXX_EXPERIMENTAL_CXX0X__ > 0)
-#  endif
-#endif
-#ifndef CV__EXCEPTION_PTR
-#  define CV__EXCEPTION_PTR 0
-#elif CV__EXCEPTION_PTR
-#  include <exception>  // std::exception_ptr
-#endif
-
-
+#include "opencv2/core/detail/exception_ptr.hpp"  // CV__EXCEPTION_PTR = 1 if std::exception_ptr is available
 
 using namespace cv;
 
@@ -312,7 +292,7 @@ namespace
                 cv::instr::InstrTLSStruct *pInstrTLS = &cv::instr::getInstrumentTLSStruct();
                 pInstrTLS->pCurrentNode = ctx.pThreadRoot; // Initialize TLS node for thread
             }
-            CV_INSTRUMENT_REGION()
+            CV_INSTRUMENT_REGION();
 #endif
 
             // propagate main thread state
@@ -420,7 +400,16 @@ static int numThreads = -1;
 #elif defined HAVE_CSTRIPES
 // nothing for C=
 #elif defined HAVE_OPENMP
-static int numThreadsMax = omp_get_max_threads();
+static inline int _initMaxThreads()
+{
+    int maxThreads = omp_get_max_threads();
+    if (!utils::getConfigurationParameterBool("OPENCV_FOR_OPENMP_DYNAMIC_DISABLE", false))
+    {
+        omp_set_dynamic(maxThreads);
+    }
+    return maxThreads;
+}
+static int numThreadsMax = _initMaxThreads();
 #elif defined HAVE_GCD
 // nothing for GCD
 #elif defined WINRT
@@ -466,7 +455,7 @@ void cv::parallel_for_(const cv::Range& range, const cv::ParallelLoopBody& body,
     CV_TRACE_ARG_VALUE(nstripes, "nstripes", (int64)nstripes);
 #endif
 
-    CV_INSTRUMENT_REGION_MT_FORK()
+    CV_INSTRUMENT_REGION_MT_FORK();
     if (range.empty())
         return;
 
@@ -491,7 +480,7 @@ void cv::parallel_for_(const cv::Range& range, const cv::ParallelLoopBody& body,
     else // nested parallel_for_() calls are not parallelized
 #endif // CV_PARALLEL_FRAMEWORK
     {
-        (void)nstripes;
+        CV_UNUSED(nstripes);
         body(range);
     }
 }
@@ -664,7 +653,7 @@ unsigned defaultNumberOfThreads()
 
 void cv::setNumThreads( int threads_ )
 {
-    (void)threads_;
+    CV_UNUSED(threads_);
 #ifdef CV_PARALLEL_FRAMEWORK
     int threads = (threads_ < 0) ? defaultNumberOfThreads() : (unsigned)threads_;
     numThreads = threads;
@@ -794,7 +783,7 @@ int cv::getNumberOfCPUs(void)
 {
 #if defined _WIN32
     SYSTEM_INFO sysinfo;
-#if (defined(_M_ARM) || defined(_M_X64) || defined(WINRT)) && _WIN32_WINNT >= 0x501
+#if (defined(_M_ARM) || defined(_M_ARM64) || defined(_M_X64) || defined(WINRT)) && _WIN32_WINNT >= 0x501
     GetNativeSystemInfo( &sysinfo );
 #else
     GetSystemInfo( &sysinfo );
@@ -804,7 +793,7 @@ int cv::getNumberOfCPUs(void)
 #elif defined __ANDROID__
     static int ncpus = getNumberOfCPUsImpl();
     return ncpus;
-#elif defined __linux__ || defined __GLIBC__ || defined __HAIKU__
+#elif defined __linux__ || defined __GLIBC__ || defined __HAIKU__ || defined __EMSCRIPTEN__
     return (int)sysconf( _SC_NPROCESSORS_ONLN );
 #elif defined __APPLE__
     int numCPU=0;
